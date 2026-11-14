@@ -33,7 +33,7 @@ def fetch_naver_market_data(complex_no):
         
         # 예시로 최저 호가, 최고 호가, 총 매물 수를 파싱한다고 가정
         # (실제 네이버 API 응답 JSON 구조에 맞춰 세부 필드는 조정 필요)
-        min_price = complex_summary.get("lowPrice", 0) * 10000  억/만원 단위 변환 처리
+        min_price = complex_summary.get("lowPrice", 0) * 10000  #억/만원 단위 변환 처리
         max_price = complex_summary.get("highPrice", 0) * 10000
         total_listings = complex_summary.get("totalArticleCount", 0)
         
