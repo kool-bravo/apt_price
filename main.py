@@ -1,9 +1,9 @@
-import os
 from datetime import datetime
+import os
 import requests
 from supabase import Client, create_client
 
-# 1. 환경 변수에서 Supabase 접속 정보 불러오기 (GitHub Secrets에서 주입됨)
+# 1. 환경 변수에서 Supabase 접속 정보 불러오기
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_SECRET_KEY")
 
@@ -16,7 +16,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 def main():
   print("아파트 시세 데이터 수집을 시작합니다...")
 
-  # 2. Supabase 'apartments' 테이블에서 수집 대상 단지 목록 가져오기
+  # 2. Supabase 'apartments' 테이블에서 단지 목록 가져오기 (id와 naver_complex_no 모두 필요)
   try:
     response = supabase.table("apartments").select("*").execute()
     apartments = response.data
@@ -25,17 +25,18 @@ def main():
     return
 
   if not apartments:
-    print(
-        "등록된 아파트 단지가 없습니다. Supabase apartments 테이블을"
-        " 확인해주세요."
-    )
+    print("등록된 아파트 단지가 없습니다. apartments 테이블을 확인해주세요.")
     return
 
   print(f"총 {len(apartments)}개의 단지 정보를 불러왔습니다.")
 
+  today_date = datetime.now().strftime("%Y-%m-%d")
+
   # 3. 각 단지별로 네이버 부동산 API 호출 및 시세 수집
   for apt in apartments:
-    complex_no = apt.get("naver_complex_no")
+    apt_id = apt.get("id")  # apartments 테이블의 고유 id
+    complex_no = apt.get("naver_complex_no")  # 네이버 단지 번호
+
     if not complex_no:
       continue
 
@@ -49,8 +50,10 @@ def main():
     }
 
     try:
-      print(f"단지 번호 {complex_no} 수집 중...")
-      # 타임아웃 10초 설정으로 무한 대기 방지
+      print(
+          f"단지명: {apt.get('name')} (ID: {apt_id}, 네이버번호:"
+          f" {complex_no}) 수집 중..."
+      )
       res = requests.get(url, headers=headers, timeout=10)
 
       if res.status_code != 200:
@@ -66,17 +69,19 @@ def main():
       # 호가 데이터 추출 및 단위 변환
       min_price = complex_summary.get("lowPrice", 0) * 10000
       max_price = complex_summary.get("highPrice", 0) * 10000
+      total_listings = complex_summary.get("totalCount", 0)
 
-      # 4. Supabase 'price_logs' 테이블에 데이터 저장
-      # (created_at은 DB 기본값인 now()가 자동으로 들어가므로 생략)
+      # 4. 실제 price_logs 테이블 구조에 맞춘 데이터 매핑
       log_data = {
-          "complex_no": str(complex_no),
-          "min_price": min_price,
-          "max_price": max_price,
+          "apartment_id": apt_id,
+          "recorded_date": today_date,
+          "min_asking_price": min_price,
+          "max_asking_price": max_price,
+          "total_listings": total_listings,
       }
 
-      insert_res = supabase.table("price_logs").insert(log_data).execute()
-      print(f"단지 번호 {complex_no} DB 저장 성공!")
+      supabase.table("price_logs").insert(log_data).execute()
+      print(f"[{apt.get('name')}] DB 저장 성공!")
 
     except requests.exceptions.Timeout:
       print(f"요청 시간 초과 (Timeout): 단지 번호 {complex_no}")
