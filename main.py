@@ -21,7 +21,10 @@ def fetch_naver_market_data(complex_no):
     }
     
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=10)
+        except requests.exceptions.Timeout:
+        print(f"요청 시간 초과: {complex_no}")
+        continue
         if response.status_code != 200:
             print(f"[오류] 네이버 API 응답 실패 (Code: {response.status_code}) 단지번호: {complex_no}")
             return None, None, None
