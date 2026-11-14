@@ -1,7 +1,11 @@
 from datetime import datetime
 import os
+from dotenv import load_dotenv
 import requests
 from supabase import Client, create_client
+
+# .env 파일에서 환경 변수 불러오기 (라즈베리파이/로컬 실행용)
+load_dotenv()
 
 # 1. 환경 변수에서 Supabase 접속 정보 불러오기
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -32,7 +36,7 @@ def main():
 
   today_date = datetime.now().strftime("%Y-%m-%d")
 
-  # 3. 세션(Session) 객체 생성 및 네이버 메인 쿠키 사전 획득 (차단 우회 핵심)
+  # 3. 세션(Session) 객체 생성 및 네이버 메인 쿠키 사전 획득 (차단 우회)
   session = requests.Session()
   base_headers = {
       "User-Agent": (
@@ -57,6 +61,8 @@ def main():
       continue
 
     url = f"https://new.land.naver.com/api/complexes/{complex_no}/overview"
+
+    # 401 에러 방지를 위한 상세 브라우저 모방 헤더
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -65,6 +71,12 @@ def main():
         "Accept": "application/json, text/javascript, */*; q=0.01",
         "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
         "Referer": f"https://new.land.naver.com/complexes/{complex_no}",
+        "Host": "new.land.naver.com",
+        "Sec-Ch-Ua": (
+            '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"'
+        ),
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
         "X-Requested-With": "XMLHttpRequest",
     }
 
@@ -73,7 +85,6 @@ def main():
           f"단지명: {apt.get('name')} (ID: {apt_id}, 네이버번호:"
           f" {complex_no}) 수집 중..."
       )
-      # 일반 requests가 아닌 앞서 쿠키를 획득한 session을 사용하여 요청
       res = session.get(url, headers=headers, timeout=10)
 
       if res.status_code != 200:
