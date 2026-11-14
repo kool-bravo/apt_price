@@ -1,91 +1,90 @@
 import os
-import requests
 from datetime import datetime
-from supabase import create_client, Client
+import requests
+from supabase import Client, create_client
 
-# 1. 환경 변수에서 Supabase 접속 정보 불러오기 (GitHub Secrets에서 주입받음)
+# 1. 환경 변수에서 Supabase 접속 정보 불러오기 (GitHub Secrets에서 주입됨)
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_SECRET_KEY")
 
+if not SUPABASE_URL or not SUPABASE_KEY:
+  raise ValueError("Supabase URL 또는 Key 환경 변수가 설정되지 않았습니다.")
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def fetch_naver_market_data(complex_no):
-    """
-    네이버 부동산 모바일/웹 API를 호출하여 해당 단지의 호가 및 매물 정보를 가져오는 함수
-    (네이버는 User-Agent 헤더가 없으면 차단하므로 브라우저인 것처럼 위장해야 합니다)
-    """
-    url = f"https://new.land.naver.com/api/complexes/{complex_no}/overview"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": f"https://new.land.naver.com/complexes/{complex_no}"
-    }
-    
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        except requests.exceptions.Timeout:
-        print(f"요청 시간 초과: {complex_no}")
-        continue
-        if response.status_code != 200:
-            print(f"[오류] 네이버 API 응답 실패 (Code: {response.status_code}) 단지번호: {complex_no}")
-            return None, None, None
-            
-        data = response.json()
-        # 네이버 단지 오버뷰 구조에서 필요한 값 추출 (단지 기본 정보 및 매물 통계)
-        # ※ 네이버 API 구조에 따라 키값은 미세 조정될 수 있습니다.
-        complex_summary = data.get("complexSummary", {})
-        
-        # 예시로 최저 호가, 최고 호가, 총 매물 수를 파싱한다고 가정
-        # (실제 네이버 API 응답 JSON 구조에 맞춰 세부 필드는 조정 필요)
-        min_price = complex_summary.get("lowPrice", 0) * 10000  #억/만원 단위 변환 처리
-        max_price = complex_summary.get("highPrice", 0) * 10000
-        total_listings = complex_summary.get("totalArticleCount", 0)
-        
-        return min_price, max_price, total_listings
-    except Exception as e:
-        print(f"[예외 발생] 단지번호 {complex_no}: {e}")
-        return None, None, None
 
 def main():
-    today = datetime.now().strftime("%Y-%m-%d")
-    print(f"=== 아파트 호가 수집 스크립트 시작 ({today}) ===")
-    
-    # 2. Supabase에서 등록된 대장 아파트 목록 가져오기
+  print("아파트 시세 데이터 수집을 시작합니다...")
+
+  # 2. Supabase 'apartments' 테이블에서 수집 대상 단지 목록 가져오기
+  try:
     response = supabase.table("apartments").select("*").execute()
     apartments = response.data
-    
-    if not apartments:
-        print("등록된 아파트가 없습니다. apartments 테이블을 확인하세요.")
-        return
+  except Exception as e:
+    print(f"apartments 테이블 조회 실패: {e}")
+    return
 
-    for apt in apartments:
-        apt_id = apt["id"]
-        name = apt["name"]
-        complex_no = apt["naver_complex_no"]
-        
-        if not complex_no:
-            print(f"[{name}] 네이버 단지 번호가 등록되지 않았습니다.")
-            continue
-            
-        print(f"수집 중: {name} (단지번호: {complex_no})")
-        
-        # 3. 네이버에서 호가 데이터 가져오기
-        min_p, max_p, listings = fetch_naver_market_data(complex_no)
-        
-        if min_p is not None:
-            # 4. Supabase price_logs 테이블에 INSERT (이미 오늘 데이터가 있으면 UPSERT 처리 가능)
-            log_data = {
-                "apartment_id": apt_id,
-                "recorded_date": today,
-                "min_asking_price": min_p,
-                "max_asking_price": max_p,
-                "total_listings": listings
-            }
-            
-            # DB에 저장 (unique 제약 조건에 걸리면 업데이트 하도록 upsert 사용)
-            supabase.table("price_logs").upsert(log_data, on_conflict="apartment_id,recorded_date").execute()
-            print(f" -> 저장 완료! (최저호가: {min_p}, 매물수: {listings})")
-            
-    print("=== 모든 수집 작업 완료 ===")
+  if not apartments:
+    print(
+        "등록된 아파트 단지가 없습니다. Supabase apartments 테이블을"
+        " 확인해주세요."
+    )
+    return
+
+  print(f"총 {len(apartments)}개의 단지 정보를 불러왔습니다.")
+
+  # 3. 각 단지별로 네이버 부동산 API 호출 및 시세 수집
+  for apt in apartments:
+    complex_no = apt.get("naver_complex_no")
+    if not complex_no:
+      continue
+
+    url = f"https://new.land.naver.com/api/complexes/{complex_no}/overview"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            " (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Referer": f"https://new.land.naver.com/complexes/{complex_no}",
+    }
+
+    try:
+      print(f"단지 번호 {complex_no} 수집 중...")
+      # 타임아웃 10초 설정으로 무한 대기 방지
+      res = requests.get(url, headers=headers, timeout=10)
+
+      if res.status_code != 200:
+        print(
+            f"네이버 API 응답 실패 (Code: {res.status_code}) 단지번호:"
+            f" {complex_no}"
+        )
+        continue
+
+      data = res.json()
+      complex_summary = data.get("complexSummary", {})
+
+      # 호가 데이터 추출 및 단위 변환
+      min_price = complex_summary.get("lowPrice", 0) * 10000
+      max_price = complex_summary.get("highPrice", 0) * 10000
+
+      # 4. Supabase 'price_logs' 테이블에 데이터 저장
+      # (created_at은 DB 기본값인 now()가 자동으로 들어가므로 생략)
+      log_data = {
+          "complex_no": str(complex_no),
+          "min_price": min_price,
+          "max_price": max_price,
+      }
+
+      insert_res = supabase.table("price_logs").insert(log_data).execute()
+      print(f"단지 번호 {complex_no} DB 저장 성공!")
+
+    except requests.exceptions.Timeout:
+      print(f"요청 시간 초과 (Timeout): 단지 번호 {complex_no}")
+      continue
+    except Exception as e:
+      print(f"단지 {complex_no} 처리 중 에러 발생: {e}")
+      continue
+
 
 if __name__ == "__main__":
-    main()
+  main()
